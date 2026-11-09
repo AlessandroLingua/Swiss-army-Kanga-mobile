@@ -1,0 +1,54 @@
+{
+  "name": "kanga-toolkit",
+  "version": "1.0.0",
+  "description": "Kanga Toolkit — il coltellino svizzero per Android (app desktop Windows/macOS/Linux)",
+  "main": "main.js",
+  "author": "Kanga Toolkit",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "fetch-adb": "node scripts/fetch-adb.js",
+    "predist": "node scripts/prepare-build.js",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.kanga.toolkit",
+    "productName": "Kanga Toolkit",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "core/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}

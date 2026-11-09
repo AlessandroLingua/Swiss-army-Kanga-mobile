@@ -1,0 +1,51 @@
+// Kanga Toolkit — modulo app Android
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.kanga.toolkit'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.kanga.toolkit'
+        minSdk 26          // Android 8.0+
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.activity:activity-ktx:1.9.2'
+}
+
+/**
+ * Copia la UI condivisa (cartella ../core del repository) negli asset
+ * dell'APK: la WebView carica file:///android_asset/core/index.html.
+ * Eseguito automaticamente prima di ogni build.
+ */
+task copyCoreAssets(type: Copy) {
+    from "${rootProject.projectDir}/../core"
+    into 'src/main/assets/core'
+    exclude '.DS_Store'
+}
+preBuild.dependsOn copyCoreAssets

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Kanga Toolkit — Il coltellino svizzero per Android</title>
+<link rel="stylesheet" href="assets/css/kanga.css">
+</head>
+<body>
+
+<!-- ===== Barra superiore ===== -->
+<header class="topbar">
+  <button class="menu-btn" id="menuBtn" title="Menu">☰</button>
+  <div class="brand">
+    <span class="brand-logo">🦘</span>
+    <span class="brand-name">Kanga <small>Toolkit</small></span>
+  </div>
+  <div class="topbar-status" id="topbarStatus">
+    <span class="chip chip-mode" id="modeChip" title="Modalità di funzionamento">…</span>
+    <span class="chip chip-device" id="deviceChip" title="Dispositivo">rilevamento…</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ===== Navigazione laterale ===== -->
+  <nav class="sidebar" id="sidebar">
+    <ul id="navList">
+      <li><a href="#/" data-route="/">🏠 <span>Panoramica</span></a></li>
+      <!-- i moduli vengono inseriti qui da kanga.js -->
+      <li><a href="#/settings" data-route="/settings">⚙️ <span>Impostazioni</span></a></li>
+    </ul>
+    <div class="sidebar-foot">
+      <div class="ver">Kanga Toolkit <span id="verLabel"></span></div>
+      <div class="motto">Un coltellino svizzero<br>per il tuo Android 🇨🇭</div>
+    </div>
+  </nav>
+
+  <!-- ===== Contenuto ===== -->
+  <main class="content" id="content">
+    <div class="boot-splash" id="bootSplash">
+      <div class="kanga-jump">🦘</div>
+      <p>Caricamento del toolkit…</p>
+    </div>
+  </main>
+</div>
+
+<!-- ===== Toast ===== -->
+<div class="toasts" id="toasts"></div>
+
+<!-- ===== Modale di conferma ===== -->
+<div class="modal-overlay hidden" id="modalOverlay">
+  <div class="modal" role="dialog" aria-modal="true">
+    <h3 id="modalTitle"></h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel">Annulla</button>
+      <button class="btn btn-danger" id="modalOk">Conferma</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Contenitore test hardware a schermo intero ===== -->
+<div id="hwtest-root"></div>
+
+<!-- Ordine importante: engine → parsers → moduli → test hw → framework UI -->
+<script src="assets/js/engine.js"></script>
+<script src="assets/js/parsers.js"></script>
+<script src="assets/js/modules.js"></script>
+<script src="assets/js/hwtest.js"></script>
+<script src="assets/js/kanga.js"></script>
+</body>
+</html>

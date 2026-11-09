@@ -1,0 +1,61 @@
+# ============================================================
+# Kanga Toolkit — .gitignore (monorepo core/ desktop/ android/)
+# ============================================================
+
+# ---------- Node / Electron (desktop/) ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+# output di electron-builder e copia di build della UI
+desktop/dist/
+desktop/core/
+# ADB scaricato dallo script fetch-adb
+desktop/bin/
+
+# ---------- Android ----------
+.gradle/
+android/**/build/
+# NB: "build/" resta NON ignorato in desktop/ (electron-builder ci mette icone e risorse)
+# copia della UI generata dal task copyCoreAssets
+android/app/src/main/assets/core/
+# percorso locale dell'SDK (macchina-specifico)
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+
+# il wrapper Gradle va SEMPRE committato
+!android/gradlew
+!android/gradlew.bat
+!android/gradle/wrapper/
+
+# ---------- Sistemi operativi ----------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------- Editor / IDE ----------
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---------- Generico ----------
+*.log
+*.tmp
+.env
+.env.*
+
+# ---------- Strumenti agent/sessione ----------
+.zcode/
