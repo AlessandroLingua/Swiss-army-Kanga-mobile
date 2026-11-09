@@ -72,9 +72,7 @@ Kanga.modules = Kanga.modules || [];
   /* ================= status chips ================= */
 
   function refreshTopbar() {
-    var modeChip = document.getElementById('modeChip');
     var devChip = document.getElementById('deviceChip');
-    modeChip.textContent = E.modeLabel();
     var st = E.state;
     devChip.classList.remove('ok', 'err');
     if (E.mode === 'desktop') {

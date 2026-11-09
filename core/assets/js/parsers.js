@@ -20,7 +20,7 @@ Kanga.parsers = (function () {
   /** dumpsys battery → oggetto {level, health, status, temperature, voltage, chargeCounter, technology, powered} */
   function battery(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^\s*([A-Za-z ]+?):\s*(.+)$/);
       if (!m) return;
       var k = m[1].trim(), v = m[2].trim();
@@ -42,7 +42,7 @@ Kanga.parsers = (function () {
    */
   function batterySysfs(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^\s*(\w+)=(.*)$/);
       if (!m) return;
       var v = m[2].trim();
@@ -58,7 +58,7 @@ Kanga.parsers = (function () {
   /** df -h → [{fs, size, used, avail, usePct, mount}] */
   function df(text) {
     var rows = [];
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
       if (!m) return;
       if (/^Filesystem$/i.test(m[1])) return;
@@ -70,7 +70,7 @@ Kanga.parsers = (function () {
   /** du -k -d 1 | sort -rn → [{kb, path}] */
   function du(text) {
     var rows = [];
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^(\d+)\s+(\/.*)$/);
       if (m) rows.push({ kb: parseInt(m[1], 10), path: m[2].trim() });
     });
@@ -80,7 +80,7 @@ Kanga.parsers = (function () {
   /** /proc/meminfo head → {totalKb, freeKb, availKb} */
   function meminfo(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^(MemTotal|MemFree|MemAvailable):\s+(\d+)/);
       if (!m) return;
       if (m[1] === 'MemTotal') out.totalKb = parseInt(m[2], 10);
@@ -93,7 +93,7 @@ Kanga.parsers = (function () {
   /** dumpsys wifi (estratto grep) → {enabled, ssid, rssi, linkSpeed} */
   function wifi(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var l = line.toLowerCase();
       if (/wi-fi is enabled/.test(l)) out.enabled = true;
       if (/wi-fi is disabled/.test(l)) out.enabled = false;
@@ -108,7 +108,7 @@ Kanga.parsers = (function () {
   /** dumpsys telephony.registry (estratto) → {level, networkType} (level 0–4) */
   function telephony(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/mSignalStrength=\s*SignalStrength:\s*(\d+)/i);
       if (m && out.raw === undefined) out.raw = parseInt(m[1], 10);
       m = line.match(/level=(\d+)/i); if (m && out.level === undefined) out.level = parseInt(m[1], 10);
@@ -135,7 +135,7 @@ Kanga.parsers = (function () {
   /** dumpsys thermalservice (estratto) → righe utili */
   function thermal(text) {
     var lines = [];
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       if (/throttl|status|temperature|severity|isStatus/i.test(line) && line.trim().length < 200) {
         var t = line.trim();
         if (t && lines.indexOf(t) < 0 && lines.length < 12) lines.push(t);
@@ -147,7 +147,7 @@ Kanga.parsers = (function () {
   /** getprop multipli (una proprietà per riga: "nome valore") → {nome: valore} */
   function props(text) {
     var out = {};
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^\[([^\]]+)\]:\s*\[(.*)\]/);
       if (m) out[m[1]] = m[2];
       else {
@@ -162,7 +162,7 @@ Kanga.parsers = (function () {
   /** sensor service header → elenco sensori [{name, vendor, status}] */
   function sensors(text) {
     var list = [];
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       var m = line.match(/^\s*\d+-(\d+)\s+(.+?)\s*\|+(.*)$/);
       if (m && list.length < 40) list.push({ handle: m[1], name: m[2].trim(), rest: m[3].trim() });
     });
@@ -172,7 +172,7 @@ Kanga.parsers = (function () {
   /** top -n 1 (toybox) → prime righe processi */
   function topProcs(text) {
     var rows = [];
-    (text || '').split('\n').forEach(function (line) {
+    (text || '').split(/\r?\n/).forEach(function (line) {
       if (rows.length >= 12) return;
       if (/^\s*PID/.test(line)) { rows.push({ header: line.trim() }); return; }
       var m = line.match(/^\s*(\d+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/);
