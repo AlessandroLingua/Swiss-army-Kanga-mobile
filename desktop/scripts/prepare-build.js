@@ -20,11 +20,12 @@ function copyDir(src, dest) {
 }
 
 const src = path.join(__dirname, '..', '..', 'core');
-const dest = path.join(__dirname, '..', 'core');
+const dest = path.join(__dirname, '..', 'app-ui');
 
 if (!fs.existsSync(path.join(src, 'index.html'))) {
   console.error('❌ Cartella core non trovata:', src);
   process.exit(1);
 }
+fs.rmSync(dest, { recursive: true, force: true });
 copyDir(src, dest);
 console.log('✅ core/ copiata in', dest);

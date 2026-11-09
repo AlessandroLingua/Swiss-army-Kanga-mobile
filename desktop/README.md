@@ -36,7 +36,12 @@ il messaggio "Consenti debug USB" al primo collegamento.
 | `npm run fetch-adb` | scarica ADB in `bin/platform-tools` |
 | `npm run dist` | crea gli installer (NSIS `.exe`, `.dmg`, `.AppImage`) in `dist/` |
 
-`npm run dist` copia automaticamente `../core` dentro l'installer (script `predist`).
+`npm run dist` include la UI tramite `extraResources` (copia `../core` in `resources/app-ui` dentro il pacchetto).
+
+> Nota build su Windows: in `build.win` è impostato `"signAndEditExecutable": false`
+> perché l'estrazione di winCodeSign (link simbolici macOS) fallisce senza privilegi
+> amministrativi. L'icona sull'exe la mette comunque NSIS. Se GitHub è lento, esportare
+> `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`.
 
 ## Struttura
 
@@ -46,8 +51,7 @@ desktop/
 ├── preload.js            ponte sicuro renderer ↔ main
 ├── lib/adb.js            ricerca/esecuzione ADB + parsing dispositivi
 ├── scripts/fetch-adb.js  download platform-tools (zero dipendenze)
-├── scripts/prepare-build.js  copia core/ prima della build
-└── core/                 (creata dalla build — copia di ../core)
+└── build/                icone (icon.ico, icon.png, PNG sorgenti)
 ```
 
 ## Come funziona la diagnostica

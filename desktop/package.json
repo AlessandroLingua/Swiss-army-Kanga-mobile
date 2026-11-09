@@ -9,7 +9,6 @@
   "scripts": {
     "start": "electron .",
     "fetch-adb": "node scripts/fetch-adb.js",
-    "predist": "node scripts/prepare-build.js",
     "dist": "electron-builder"
   },
   "devDependencies": {
@@ -26,14 +25,23 @@
       "main.js",
       "preload.js",
       "lib/**/*",
-      "core/**/*",
+      "scripts/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../core",
+        "to": "app-ui",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "portable"
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
     },
     "mac": {
       "target": [

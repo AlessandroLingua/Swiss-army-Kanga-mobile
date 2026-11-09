@@ -10,7 +10,7 @@ yarn-error.log*
 .npm/
 # output di electron-builder e copia di build della UI
 desktop/dist/
-desktop/core/
+desktop/app-ui/
 # ADB scaricato dallo script fetch-adb
 desktop/bin/
 

@@ -22,9 +22,13 @@ let hwPort = 0;
 
 /* ---------- percorso della UI condivisa (core) ---------- */
 function coreDir() {
-  const inPkg = path.join(__dirname, 'core');        // pacchettizzato (prepare-build)
+  if (app.isPackaged) {
+    const res = path.join(process.resourcesPath, 'app-ui');   // extraResources
+    if (fs.existsSync(path.join(res, 'index.html'))) return res;
+  }
+  const inPkg = path.join(__dirname, 'app-ui');               // fallback storico
   if (fs.existsSync(path.join(inPkg, 'index.html'))) return inPkg;
-  return path.join(__dirname, '..', 'core');          // sviluppo
+  return path.join(__dirname, '..', 'core');                  // sviluppo
 }
 
 /* ---------- impostazioni persistite ---------- */
@@ -46,6 +50,7 @@ function createWindow() {
     backgroundColor: '#0d1117',
     autoHideMenuBar: true,
     title: 'Kanga Toolkit',
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
