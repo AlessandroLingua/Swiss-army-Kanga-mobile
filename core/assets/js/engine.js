@@ -182,6 +182,66 @@ Kanga.engine = (function () {
     return initWeb();
   }
 
+  /* ---------- scheda dispositivo (home) ---------- */
+  function fmtUptime(sec) {
+    sec = Number(sec) || 0;
+    var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+    return (d ? d + 'g ' : '') + (d || h ? h + 'h ' : '') + m + 'm';
+  }
+
+  function deviceInfo() {
+    var P = Kanga.parsers;
+    if (mode === 'desktop') {
+      return Promise.all([
+        shell('echo "manufacturer=$(getprop ro.product.manufacturer)"; echo "model=$(getprop ro.product.model) $(getprop ro.product.marketname)"; echo "release=$(getprop ro.build.version.release)"; echo "sdk=$(getprop ro.build.version.sdk)"; echo "patch=$(getprop ro.build.version.security_patch)"; echo "soc=$(getprop ro.soc.model)$(getprop ro.board.platform)"; echo "crypto=$(getprop ro.crypto.state)/$(getprop ro.crypto.type)"; echo "uptime=$(cat /proc/uptime)"'),
+        shell('cat /proc/meminfo | head -n 3'),
+        shell('df -h /data | tail -n 1')
+      ]).then(function (r) {
+        var v = {};
+        (r[0].stdout || '').split(/\r?\n/).forEach(function (l) { var m = l.match(/^(\w+)=(.*)$/); if (m) v[m[1]] = m[2]; });
+        var mem = P.meminfo(r[1].stdout || '');
+        var dfRow = P.df(r[2].stdout || '')[0] || {};
+        var kv = [
+          ['Modello', ((v.manufacturer || '') + ' ' + (v.model || '')).trim() || '—'],
+          ['Android', (v.release || '—') + ' (API ' + (v.sdk || '?') + ')'],
+          ['Patch di sicurezza', v.patch || '—'],
+          ['SoC', v.soc || '—'],
+          ['RAM', mem.totalKb ? P.kbHuman(mem.totalKb) + ' · libera ' + P.kbHuman(mem.availKb || mem.freeKb) : '—'],
+          ['Memoria', dfRow.size ? dfRow.used + ' usati su ' + dfRow.size + ' (' + dfRow.usePct + ')' : '—'],
+          ['Acceso da', fmtUptime(v.uptime)],
+          ['Crittografia', v.crypto || '—', true],
+          ['Numero build', v.sdk ? (v.release + '.' + v.sdk) : '—', true]
+        ];
+        return { kv: kv };
+      });
+    }
+    if (mode === 'native') {
+      return Promise.all([native('deviceInfo'), native('memory'), native('storage')]).then(function (r) {
+        var d = r[0], m = r[1], s = r[2];
+        var kv = [
+          ['Modello', ((d.manufacturer || '') + ' ' + (d.model || '')).trim()],
+          ['Android', (d.release || '—') + ' (API ' + (d.sdk || '?') + ')'],
+          ['Patch di sicurezza', d.securityPatch || '—'],
+          ['Schermo', d.widthPx + '×' + d.heightPx + (d.refreshHz ? ' @ ' + Math.round(d.refreshHz) + ' Hz' : '')],
+          ['RAM', P.human(m.totalMem) + ' · libera ' + P.human(m.availMem)],
+          ['Memoria', P.human(s.totalBytes - s.availBytes) + ' usati su ' + P.human(s.totalBytes)],
+          ['Acceso da', fmtUptime((d.uptimeMs || 0) / 1000)],
+          ['Densità', d.densityDpi ? d.densityDpi + ' dpi' : '—', true]
+        ];
+        return { kv: kv };
+      });
+    }
+    return Promise.resolve({
+      kv: [
+        ['Browser', navigator.userAgent.slice(0, 60)],
+        ['Piattaforma', navigator.platform || '—'],
+        ['Schermo', screen.width + '×' + screen.height],
+        ['RAM (indicata)', navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '—'],
+        ['Lingua', navigator.language || '—']
+      ]
+    });
+  }
+
   /* ---------- API pubbliche ---------- */
   return {
     mode: mode,
@@ -191,6 +251,7 @@ Kanga.engine = (function () {
     shell: shell,
     native: native,
     invoke: invoke,
+    deviceInfo: deviceInfo,
     selectDevice: function (serial) { state.currentSerial = serial; emit(); },
     webBattery: webBattery,
     webStorage: webStorage,

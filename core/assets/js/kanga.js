@@ -47,6 +47,7 @@ Kanga.modules = Kanga.modules || [];
       document.getElementById('modalTitle').textContent = title;
       document.getElementById('modalBody').innerHTML = body || '';
       document.getElementById('modalOk').textContent = okLabel || 'Conferma';
+      document.getElementById('modalCancel').style.display = '';
       ov.classList.remove('hidden');
       function done(v) {
         ov.classList.add('hidden');
@@ -68,6 +69,32 @@ Kanga.modules = Kanga.modules || [];
     if (score >= 40) return { letter: 'D', color: 'var(--warn)' };
     return { letter: 'E', color: 'var(--bad)' };
   }
+
+  /** Modalità esperta: mostra dati grezzi, strumenti avanzati e console ADB */
+  function expertMode() {
+    try { return localStorage.getItem('kanga.expert') === '1'; } catch (e) { return false; }
+  }
+  Kanga.ui.expert = expertMode;
+
+  /** Finestra con output testuale (strumenti esperti) */
+  function showRaw(title, text) {
+    var ov = document.getElementById('modalOverlay');
+    var box = ov.querySelector('.modal');
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').innerHTML = '<pre class="raw" style="max-height:52vh">' + esc(text) + '</pre>';
+    document.getElementById('modalOk').textContent = 'Chiudi';
+    document.getElementById('modalCancel').style.display = 'none';
+    box.classList.add('wide');
+    ov.classList.remove('hidden');
+    function done() {
+      ov.classList.add('hidden');
+      box.classList.remove('wide');
+      document.getElementById('modalCancel').style.display = '';
+      document.getElementById('modalOk').onclick = null;
+    }
+    document.getElementById('modalOk').onclick = done;
+  }
+  Kanga.ui.showRaw = showRaw;
 
   /* ================= status chips ================= */
 
@@ -182,6 +209,19 @@ Kanga.modules = Kanga.modules || [];
       });
     });
     updateModuleChips();
+
+    // 📱 scheda dispositivo (identità, RAM, memoria, uptime)
+    var dp = el('div', 'panel');
+    dp.id = 'devCard';
+    dp.innerHTML = '<h3>📱 Questo dispositivo</h3><div class="loading" style="padding:8px 0"><div class="spinner"></div>Rilevamento…</div>';
+    content.appendChild(dp);
+    E.deviceInfo().then(function (d) {
+      var kvVisible = d.kv.filter(function (p) { return !p[2] || expertMode(); });
+      var html = '<dl class="kv">';
+      kvVisible.forEach(function (p) { html += '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>'; });
+      html += '</dl>';
+      dp.innerHTML = '<h3>📱 Questo dispositivo</h3>' + html;
+    }).catch(function () { dp.style.display = 'none'; });
   }
 
   function updateModuleChips() {
@@ -239,6 +279,7 @@ Kanga.modules = Kanga.modules || [];
 
   function renderResult(panel, mod, res) {
     panel.innerHTML = '';
+    var EXP = expertMode();
 
     // sommario + punteggio
     var top = el('div', '', '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">' +
@@ -247,24 +288,30 @@ Kanga.modules = Kanga.modules || [];
     panel.appendChild(top);
 
     if (res.kv && res.kv.length) {
-      var kvBox = el('div', 'panel');
-      kvBox.style.background = 'var(--bg-3)';
-      var dl = '<dl class="kv">';
-      res.kv.forEach(function (pair) { dl += '<dt>' + esc(pair[0]) + '</dt><dd>' + esc(pair[1]) + '</dd>'; });
-      dl += '</dl>';
-      kvBox.innerHTML = '<h3>Dati rilevati</h3>' + dl;
-      panel.appendChild(kvBox);
+      var kvVisible = res.kv.filter(function (p) { return !p[2] || EXP; });
+      if (kvVisible.length) {
+        var kvBox = el('div', 'panel');
+        kvBox.style.background = 'var(--bg-3)';
+        var dl = '<dl class="kv">';
+        kvVisible.forEach(function (pair) { dl += '<dt>' + esc(pair[0]) + '</dt><dd>' + esc(pair[1]) + '</dd>'; });
+        dl += '</dl>';
+        kvBox.innerHTML = '<h3>Dati rilevati</h3>' + dl;
+        panel.appendChild(kvBox);
+      }
     }
 
     if (res.findings && res.findings.length) {
-      var ul = el('ul', 'findings');
-      res.findings.forEach(function (f) {
-        ul.appendChild(el('li', 'f-' + f.level, '<span class="f-dot"></span><span>' + esc(f.text) + '</span>'));
-      });
-      panel.appendChild(ul);
+      var visible = res.findings.filter(function (f) { return !f.expert || EXP; });
+      if (visible.length) {
+        var ul = el('ul', 'findings');
+        visible.forEach(function (f) {
+          ul.appendChild(el('li', 'f-' + f.level, '<span class="f-dot"></span><span>' + esc(f.text) + '</span>'));
+        });
+        panel.appendChild(ul);
+      }
     }
 
-    if (res.rows && res.rows.data && res.rows.data.length) {
+    if (res.rows && res.rows.data && res.rows.data.length && !(res.rowsExpert && !EXP)) {
       var tb = el('div', 'panel');
       var html = '<h3>Dettaglio</h3><table class="tbl"><thead><tr>';
       res.rows.cols.forEach(function (c) { html += '<th>' + esc(c) + '</th>'; });
@@ -287,7 +334,7 @@ Kanga.modules = Kanga.modules || [];
 
     if (res.actions && res.actions.length) {
       var row = el('div', 'actions-row');
-      res.actions.forEach(function (a) {
+      res.actions.filter(function (a) { return !a.expert || EXP; }).forEach(function (a) {
         var b = el('button', 'btn btn-sm' + (a.danger ? ' btn-danger' : ''), esc(a.label));
         b.title = a.hint || '';
         b.addEventListener('click', function () {
@@ -484,6 +531,10 @@ Kanga.modules = Kanga.modules || [];
 
     var html = '';
 
+    // interruttore modalità esperta (tutte le piattaforme)
+    html += '<div class="setting-row"><div class="s-label"><b>🧰 Modalità esperta</b><span>Mostra dati grezzi, tool avanzati (dexopt, fstrim, DNS privato, aereo…) e la console ADB. I pulsanti "da esperti" compaiono nelle pagine dei moduli.</span></div>' +
+      '<input type="checkbox" id="setExpert" style="width:20px;height:20px;accent-color:var(--accent)" ' + (expertMode() ? 'checked' : '') + '></div>';
+
     if (E.mode === 'desktop') {
       html += row('Motori ADB', 'Percorso ADB in uso e strumenti', '<button class="btn btn-sm" id="setAdbPick">📁 Scegli adb…</button><button class="btn btn-sm" id="setAdbFetch" style="margin-left:6px">⬇️ Scarica ADB</button>');
       html += '<div class="setting-row"><div class="s-label"><b>Percorso ADB attuale</b><span id="adbPathLabel">…</span></div></div>';
@@ -504,6 +555,11 @@ Kanga.modules = Kanga.modules || [];
     content.appendChild(p);
 
     if (E.mode === 'desktop') {
+      if (expertMode()) {
+        p.innerHTML += '<div class="setting-row"><div class="s-label"><b>⌨️ Console ADB</b><span>Esegue comandi shell direttamente sul telefono collegato. Uso avanzato: comandi errati possono modificare il sistema. Stessa potenza del terminale adb.</span></div></div>' +
+          '<div class="setting-row"><input id="cmdInput" placeholder="es. dumpsys battery" style="flex:1;min-width:220px;background:var(--bg-3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 12px;font-family:Consolas,monospace;font-size:13px"><button class="btn btn-sm btn-primary" id="cmdRun" style="margin-left:8px">Esegui</button></div>' +
+          '<pre class="raw" id="cmdOut" style="max-height:220px">$ pronto — digita un comando e premi Invio.</pre>';
+      }
       E.invoke('getSettings', {}).then(function (s) {
         var l = document.getElementById('adbPathLabel');
         if (l) l.textContent = s.adbPath || 'non trovato — scaricalo o sceglierlo';
@@ -552,6 +608,30 @@ Kanga.modules = Kanga.modules || [];
       if (usage) usage.addEventListener('click', function () { E.native('requestUsagePermission'); toast('Concedi l\'accesso a "Kanga Toolkit" poi torna qui', 'info'); });
       var mic = document.getElementById('setMic');
       if (mic) mic.addEventListener('click', function () { E.native('requestMicPermission'); });
+    }
+
+    var expertCb = document.getElementById('setExpert');
+    if (expertCb) expertCb.addEventListener('change', function () {
+      try { localStorage.setItem('kanga.expert', expertCb.checked ? '1' : '0'); } catch (e) {}
+      toast(expertCb.checked ? 'Modalità esperta ATTIVATA: nelle pagine compaiono i tool avanzati' : 'Modalità esperta disattivata', 'ok');
+      setTimeout(route, 150);
+    });
+
+    var cmdIn = document.getElementById('cmdInput');
+    if (cmdIn) {
+      var runCmd = function () {
+        var c = cmdIn.value.trim();
+        if (!c) return;
+        var out = document.getElementById('cmdOut');
+        out.textContent = '$ ' + c + '\n… esecuzione in corso …';
+        E.shell(c).then(function (r) {
+          var text = (r.stdout || '') + (r.stderr ? '\n[stderr] ' + r.stderr : '');
+          out.textContent = '$ ' + c + '\n\n' + (text.trim() || '(nessun output)') + (r.ok ? '' : '\n[exit: ' + r.code + ']');
+          out.scrollTop = 0;
+        });
+      };
+      document.getElementById('cmdRun').addEventListener('click', runCmd);
+      cmdIn.addEventListener('keydown', function (e) { if (e.key === 'Enter') runCmd(); });
     }
 
     var clear = document.getElementById('setClear');

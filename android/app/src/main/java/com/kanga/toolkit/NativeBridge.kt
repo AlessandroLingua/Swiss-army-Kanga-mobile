@@ -10,9 +10,11 @@ import android.hardware.SensorManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaDrm
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.TrafficStats
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
@@ -22,6 +24,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.Process
 import android.os.StatFs
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
@@ -85,6 +88,13 @@ class NativeBridge(private val activity: MainActivity, private val webView: WebV
         "requestUsagePermission" -> { openUsageSettings(); JSONObject().put("ok", true) }
         "requestMicPermission" -> { activity.requestMicPermissionFromBridge(); JSONObject().put("ok", true) }
         "share" -> share(p.optString("text", ""), p.optString("subject", "Report Kanga Toolkit"))
+        "drm" -> drmInfo()
+        "traffic" -> traffic()
+        "powerSave" -> powerSave()
+        "securityFlags" -> securityFlags()
+        "appVersion" -> appVersion(p.optString("package"))
+        "openCamera" -> { openCamera(); JSONObject().put("ok", true) }
+        "pingHost" -> ping(p.optString("host", "8.8.8.8"))
         else -> throw IllegalArgumentException("comando sconosciuto: $cmd")
     }
 
@@ -111,6 +121,7 @@ class NativeBridge(private val activity: MainActivity, private val webView: WebV
             .put("heightPx", dm.heightPixels)
             .put("densityDpi", dm.densityDpi)
             .put("refreshHz", refresh.toDouble())
+            .put("uptimeMs", SystemClock.elapsedRealtime())
     }
 
     private fun batteryIntent(): android.content.Intent? {
@@ -316,6 +327,7 @@ class NativeBridge(private val activity: MainActivity, private val webView: WebV
             if (info != null && info.ipAddress != 0) {
                 out.put("wifiRssi", info.rssi)
                 out.put("wifiLink", info.linkSpeed)
+                out.put("wifiFreq", info.frequency)
                 if (!info.ssid.isNullOrBlank() && info.ssid != "<unknown ssid>") {
                     out.put("wifiSsid", info.ssid.removePrefix("\"").removeSuffix("\""))
                 }
@@ -332,8 +344,64 @@ class NativeBridge(private val activity: MainActivity, private val webView: WebV
             out.put("bluetoothOn", bm.adapter?.isEnabled == true)
         } catch (e: Exception) { /* permesso non concesso su API 31+ */ }
 
+        try {
+            val mode = Settings.Global.getString(ctx.contentResolver, "private_dns_mode")
+            val spec = Settings.Global.getString(ctx.contentResolver, "private_dns_specifier")
+            if (!mode.isNullOrBlank()) out.put("privateDns", if (spec.isNullOrBlank()) mode else "$mode ($spec)")
+        } catch (e: Exception) { /* non leggibile */ }
+
         out.put("ping", ping("8.8.8.8"))
         return out
+    }
+
+    private fun drmInfo(): JSONObject {
+        return try {
+            // UUID Widevine: edef8ba9-79d6-4ace-a3c8-27dcd51d21ed
+            val widevine = java.util.UUID.fromString("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed")
+            val drm = MediaDrm(widevine)
+            val level = drm.getPropertyString("securityLevel")
+            val version = try { drm.getPropertyString("systemId") ?: "" } catch (e: Exception) { "" }
+            drm.close()
+            JSONObject().put("widevine", level ?: "").put("version", version)
+        } catch (e: Exception) {
+            JSONObject().put("widevine", "").put("error", e.message ?: "drm non disponibile")
+        }
+    }
+
+    private fun traffic(): JSONObject {
+        return JSONObject()
+            .put("rxAll", TrafficStats.getTotalRxBytes())
+            .put("txAll", TrafficStats.getTotalTxBytes())
+            .put("rxMobile", TrafficStats.getMobileRxBytes())
+            .put("txMobile", TrafficStats.getMobileTxBytes())
+    }
+
+    private fun powerSave(): JSONObject {
+        val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return JSONObject().put("on", pm.isPowerSaveMode)
+    }
+
+    private fun securityFlags(): JSONObject {
+        val out = JSONObject()
+        try { out.put("adb", Settings.Global.getInt(ctx.contentResolver, "adb_enabled", 0)) } catch (e: Exception) { out.put("adb", -1) }
+        try { out.put("devSettings", Settings.Global.getInt(ctx.contentResolver, "development_settings_enabled", 0)) } catch (e: Exception) { out.put("devSettings", -1) }
+        return out
+    }
+
+    private fun appVersion(pkg: String): JSONObject {
+        return if (pkg.isBlank()) JSONObject().put("error", "package mancante")
+        else try {
+            val pi = ctx.packageManager.getPackageInfo(pkg, 0)
+            JSONObject().put("version", pi.versionName ?: "?").put("firstInstall", pi.firstInstallTime)
+        } catch (e: Exception) { JSONObject().put("error", "app non trovata") }
+    }
+
+    private fun openCamera() {
+        main.post {
+            try {
+                activity.startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+            } catch (e: Exception) { /* nessuna app fotocamera */ }
+        }
     }
 
     private fun ping(host: String): JSONObject {

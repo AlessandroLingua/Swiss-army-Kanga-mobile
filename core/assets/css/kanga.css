@@ -250,6 +250,7 @@ pre.raw {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   width: min(480px, 92vw); padding: 20px; box-shadow: var(--shadow);
 }
+.modal.wide { width: min(780px, 95vw); }
 .modal h3 { margin: 0 0 10px; }
 .modal-body { color: var(--muted); font-size: 14px; line-height: 1.55; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }

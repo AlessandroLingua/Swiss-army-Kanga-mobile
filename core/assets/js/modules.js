@@ -22,7 +22,7 @@ window.Kanga = window.Kanga || {};
     if (E.mode === 'desktop' && !E.hasDevice()) return 'Nessun telefono collegato. Collega il telefono via USB con il debug USB attivo, poi riprova.';
     return null;
   }
-  function f(level, text) { return { level: level, text: text }; }
+  function f(level, text, expert) { return { level: level, text: text, expert: !!expert }; }
   function ok(text) { return f('ok', text); }
   function info(text) { return f('info', text); }
   function warn(text) { return f('warn', text); }
@@ -353,7 +353,7 @@ window.Kanga = window.Kanga || {};
         'for f in charge_full charge_full_design cycle_count health temp; do ' +
         'echo "$f=$(cat /sys/class/power_supply/battery/$f 2>/dev/null)"; done';
       var modelScript = 'echo "model=$(getprop ro.product.model) $(getprop ro.product.marketname)"';
-      return Promise.all([sh('dumpsys battery'), sh(sysfsScript), sh(modelScript)]).then(function (r) {
+      return Promise.all([sh('dumpsys battery'), sh(sysfsScript), sh(modelScript), sh('settings get global low_power')]).then(function (r) {
         var b = P.battery(r[0]);
         var s = P.batterySysfs(r[1]);
         var modelStr = ((r[2] || '').replace(/^model=/, '') || '').trim();
@@ -413,13 +413,28 @@ window.Kanga = window.Kanga || {};
         findings.push(info('Perché resta all\'1% o si spegne all\'improvviso? La percentuale è stimata dalla tensione: con poche mAh reali la stima slitta. Il Laboratorio batteria (qui sotto) misura i mAh veri e la durata effettiva.'));
         findings.push(info('Consigli: mantieni la carica tra 20% e 80%, evita caldo e cariche rapide continue; se disponibile attiva la "carica limitata all\'80%" o "proteggi batteria" nelle impostazioni.'));
 
-        return { score: score, status: statusFromScore(score), summary: score !== null ? 'Salute batteria stimata: ' + score + '%' : 'Analisi batteria (dati parziali)', findings: findings, kv: kv };
+        var saver = (r[3] || '').trim() === '1';
+        kv.push(['Risparmio energetico', saver ? 'attivo' : 'disattivo']);
+        var actions = [
+          saver
+            ? { label: '🔋 Disattiva risparmio energetico', hint: 'Riporta il telefono al consumo normale.', danger: true, run: function () { return sh('settings put global low_power 0').then(function () { Kanga.ui.toast('Risparmio energetico disattivato', 'ok'); }); } }
+            : { label: '🔋 Attiva risparmio energetico', hint: 'Limita attività in background e prestazioni per allungare l\'autonomia.', danger: true, run: function () { return sh('settings put global low_power 1').then(function () { Kanga.ui.toast('Risparmio energetico attivato', 'ok'); }); } },
+          { label: '📜 Cronologia batteria', hint: 'Eventi di carica/scarica registrati dal sistema (raw).', expert: true, run: function () { return sh('dumpsys batterystats --history | tail -n 150').then(function (t) { Kanga.ui.showRaw('Cronologia batteria (ultimi eventi)', t || '(vuota)'); }); } },
+          { label: '🔓 Top wakelock', hint: 'Cosa tiene sveglia il telefono in standby — i famosi "drain" notturni.', expert: true, run: function () { return sh('dumpsys batterystats --charged | grep -iB1 -A3 "Wake lock" | head -n 60').then(function (t) { Kanga.ui.showRaw('Wakelock (per processo)', t || '(nessuno)'); }); } },
+          { label: '⏱ Tempo schermo acceso', hint: 'Statistiche di consumo dalla ultima ricarica.', expert: true, run: function () { return sh('dumpsys batterystats --charged | grep -iE "Screen on:|Total run time|Battery time remaining|Capacity:" | head -n 10').then(function (t) { Kanga.ui.showRaw('Statistiche dalla ricarica', t || '(nessun dato)'); }); } }
+        ];
+
+        return { score: score, status: statusFromScore(score), summary: score !== null ? 'Salute batteria stimata: ' + score + '%' : 'Analisi batteria (dati parziali)', findings: findings, kv: kv, actions: actions };
       });
     },
 
     runNative: function () {
       var self = this;
-      return E.native('battery').then(function (b) {
+      return Promise.all([
+        E.native('battery'),
+        E.native('powerSave').catch(function () { return { on: null }; })
+      ]).then(function (res) {
+        var b = res[0], ps = res[1];
         var healthPct = (b.chargeFull && b.chargeFullDesign) ? Math.round(b.chargeFull / b.chargeFullDesign * 100) : null;
         var modelStr = (E.state.deviceInfo && (E.state.deviceInfo.manufacturer + ' ' + E.state.deviceInfo.model)) || '';
         var design = designCapacity(modelStr) || (b.chargeFullDesign ? Math.round(b.chargeFullDesign / 1000) : null);
@@ -467,6 +482,7 @@ window.Kanga = window.Kanga || {};
           else findings.push(ok('Temperatura: ' + b.temperature + ' °C.'));
         }
         findings.push(info('Per la durata reale: apri il "Laboratorio batteria" qui sotto e avvia il monitoraggio.'));
+        kv.push(['Risparmio energetico', ps.on === null ? '—' : (ps.on ? 'attivo' : 'disattivo')]);
         return { score: score, status: statusFromScore(score), summary: score !== null ? 'Salute batteria: ' + score + '%' : 'Analisi batteria', findings: findings, kv: kv };
       });
     },
@@ -534,25 +550,52 @@ window.Kanga = window.Kanga || {};
       return Promise.all([
         sh('cat /proc/meminfo | head -n 4'),
         sh('dumpsys cpuinfo | head -n 25'),
-        sh('settings get global window_animation_scale')
+        sh('settings get global window_animation_scale'),
+        sh('echo "soc=$(getprop ro.soc.model)$(getprop ro.board.platform)"; echo "uptime=$(cat /proc/uptime)"'),
+        sh('cat /proc/meminfo | grep -iE "swap" | head -n 4'),
+        sh('top -n 1 | head -n 14')
       ]).then(function (r) {
         var mem = P.meminfo(r[0]);
         var anim = parseFloat(r[2]);
-        var cpuHead = r[1].split('\n').slice(0, 14).join('\n');
+        var cpuHead = r[1].split(/\r?\n/).slice(0, 14).join('\n');
         var benchMs = benchCPU();
         var res = self.buildFindings(mem, benchMs, isNaN(anim) ? null : anim, []);
+
+        // SoC, uptime, swap
+        var extra = {};
+        (r[3] || '').split(/\r?\n/).forEach(function (l) { var m = l.match(/^(\w+)=(.*)$/); if (m) extra[m[1]] = m[2]; });
+        var swapLines = (r[4] || '').split(/\r?\n/).filter(function (l) { return l.trim() && /kB/.test(l); });
+        // processi top (toybox: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ ARGS)
+        var topRows = [];
+        (r[5] || '').split(/\r?\n/).forEach(function (l) {
+          var p = l.trim().split(/\s+/);
+          if (p.length > 11 && /^\d+$/.test(p[0])) topRows.push([p[0], p[1], p[8], p[5] + 'K', p.slice(11).join(' ')]);
+        });
+        var touches = null;
+
         var kv = [
           ['RAM totale', P.kbHuman(mem.totalKb)],
           ['RAM disponibile', P.kbHuman(mem.availKb)],
           ['Animazioni', isNaN(anim) ? '—' : anim + '×'],
-          ['Benchmark JS (questo PC)', Math.round(benchMs) + ' ms']
+          ['SoC', extra.soc || '—'],
+          ['Acceso da', extra.uptime ? fmtHours(parseFloat(extra.uptime) / 3600) : '—'],
+          ['Benchmark JS (questo PC)', Math.round(benchMs) + ' ms'],
+          ['Swap / ZRAM', swapLines.length ? swapLines.join(' · ') : 'non attivo', true],
+          ['dumpsys cpuinfo', 'vedi "Dati grezzi" sotto', true]
         ];
         return {
           score: res.score, status: statusFromScore(res.score),
           summary: 'Analisi prestazioni completata', findings: res.findings, kv: kv,
+          rows: topRows.length ? { cols: ['PID', 'Utente', 'CPU%', 'RES', 'Processo'], data: topRows } : null,
+          rowsExpert: true,
           actions: [
-            { label: '⚡ Rendi più scattante (animazioni 0.5×)', hint: 'Imposta le 3 scale di animazione a 0.5. Reversibile.', run: function () { return sh('settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; settings put global animator_duration_scale 0.5').then(function () { Kanga.ui.toast('Animazioni ridotte a 0.5×', 'ok'); }); } },
-            { label: '📦 Libera RAM (chiudi background)', hint: 'Forza lo stop delle app in background cached. I dati non vengono cancellati.', danger: true, run: function () { return sh('am kill-all').then(function () { Kanga.ui.toast('Processi in background terminati', 'ok'); }); } }
+            { label: '⚡ Accelerazione 1-click', hint: 'Animazioni a 0.5× + cache di sistema liberata + chiusura app in background. Torna fluido in un attimo.', danger: true, run: function () { return sh('settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; settings put global animator_duration_scale 0.5').then(function () { return sh('pm trim-caches 999G'); }).then(function () { return sh('am kill-all'); }).then(function () { Kanga.ui.toast('Fatto: animazioni 0.5×, cache e background liberati', 'ok'); }); } },
+            { label: '⚡ Solo animazioni 0.5×', hint: 'Imposta le 3 scale di animazione a 0.5. Reversibile.', run: function () { return sh('settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; settings put global animator_duration_scale 0.5').then(function () { Kanga.ui.toast('Animazioni ridotte a 0.5×', 'ok'); }); } },
+            { label: '📦 Libera RAM (chiudi background)', hint: 'Forza lo stop delle app in background cached. I dati non vengono cancellati.', danger: true, run: function () { return sh('am kill-all').then(function () { Kanga.ui.toast('Processi in background terminati', 'ok'); }); } },
+            { label: '🚀 Ricompila app in modalità speed', hint: 'Riottimizza il codice di tutte le app (dexopt). Può richiedere diversi minuti; il telefono resta usabile.', danger: true, expert: true, run: function () { Kanga.ui.toast('Ottimizzazione avviata: lascia il telefono collegato', 'info'); return sh('cmd package compile -m speed --all', 300000).then(function () { Kanga.ui.toast('Ricompilazione completata', 'ok'); }); } },
+            { label: '🧵 Dexopt in background', hint: 'Ottimizzazione standard in secondo piano (quella che fa il telefono di notte).', danger: true, expert: true, run: function () { Kanga.ui.toast('Job avviato: terminerà in autonomia', 'info'); return sh('cmd package bg-dexopt-job', 300000).then(function () { Kanga.ui.toast('Ottimizzazione background terminata', 'ok'); }); } },
+            { label: '👆 Mostra i tocchi ON/OFF', hint: 'Overlay visivo dei tocchi (come nelle demo). Riesegui per disattivare.', expert: true, run: function () { return sh('settings get global show_touches').then(function (v) { touches = (v || '').trim() === '1'; return sh('settings put global show_touches ' + (touches ? '0' : '1')); }).then(function () { Kanga.ui.toast(touches ? 'Overlay tocchi disattivato' : 'Overlay tocchi attivo', 'ok'); }); } },
+            { label: '📊 Frequenze CPU live', hint: 'Frequenza attuale di ogni core del SoC.', expert: true, run: function () { return sh('for c in /sys/devices/system/cpu/cpu[0-9]*; do echo "$c: $(cat $c/cpufreq/scaling_cur_freq 2>/dev/null) kHz"; done | head -n 12').then(function (t) { Kanga.ui.showRaw('Frequenze CPU (kHz)', t || 'non leggibile'); }); } }
           ],
           raw: cpuHead ? 'dumpsys cpuinfo (estratto):\n' + cpuHead : undefined
         };
@@ -561,7 +604,11 @@ window.Kanga = window.Kanga || {};
 
     runNative: function () {
       var self = this;
-      return E.native('memory').then(function (m) {
+      return Promise.all([
+        E.native('memory'),
+        E.native('deviceInfo').catch(function () { return {}; })
+      ]).then(function (res) {
+        var m = res[0], d = res[1];
         var mem = { totalKb: Math.round((m.totalMem || 0) / 1024), availKb: Math.round((m.availMem || 0) / 1024) };
         var benchMs = benchCPU();
         var res = self.buildFindings(mem, benchMs, null, []);
@@ -570,9 +617,16 @@ window.Kanga = window.Kanga || {};
           ['RAM disponibile', P.human(m.availMem)],
           ['Pressione memoria', m.lowMemory ? 'alta (sistema sotto pressione)' : 'normale'],
           ['Benchmark JS', Math.round(benchMs) + ' ms'],
-          ['Memoria app (PSS)', P.human(m.myPss)]
+          ['Memoria app (PSS)', P.human(m.myPss)],
+          ['Acceso da', d.uptimeMs ? fmtHours(d.uptimeMs / 3600000) : '—', true]
         ];
-        return { score: res.score, status: statusFromScore(res.score), summary: 'Analisi prestazioni completata', findings: res.findings, kv: kv };
+        return {
+          score: res.score, status: statusFromScore(res.score), summary: 'Analisi prestazioni completata', findings: res.findings, kv: kv,
+          actions: [
+            { label: '⚡ Pulisci cache e velocizza', hint: 'Libera la cache delle app dal sistema.', run: function () { return E.native('clearMyCache').then(function (r) { Kanga.ui.toast('Liberati ' + P.human(r.freed || 0) + ' di cache', 'ok'); }); } },
+            { label: '📊 Dati memoria grezzi', hint: 'Statistiche complete del MemoryInfo.', expert: true, run: function () { Kanga.ui.showRaw('MemoryInfo nativo', JSON.stringify(m, null, 2)); } }
+          ]
+        };
       });
     },
 
@@ -634,7 +688,10 @@ window.Kanga = window.Kanga || {};
           rows: big.length ? { cols: ['Cartella', 'Dimensione'], data: big.slice(0, 10).map(function (x) { return [x.path.replace('/sdcard', '~'), P.kbHuman(x.kb)]; }) } : null,
           actions: [
             { label: '🧹 Libera cache di sistema (sicuro)', hint: 'pm trim-caches: elimina solo file temporanei delle app, nessun dato utente.', run: function () { return sh('pm trim-caches 999G').then(function () { Kanga.ui.toast('Cache di sistema liberata', 'ok'); }); } },
-            { label: '🧹 Cancella thumbnail e file temporanei', hint: 'Elimina .thumbnails e EmptyFolder su /sdcard.', danger: true, run: function () { return sh('rm -rf /sdcard/DCIM/.thumbnails /sdcard/Pictures/.thumbnails').then(function () { Kanga.ui.toast('Thumbnail eliminate', 'ok'); }); } }
+            { label: '🧹 Cancella thumbnail e file temporanei', hint: 'Elimina .thumbnails e EmptyFolder su /sdcard.', danger: true, run: function () { return sh('rm -rf /sdcard/DCIM/.thumbnails /sdcard/Pictures/.thumbnails').then(function () { Kanga.ui.toast('Thumbnail eliminate', 'ok'); }); } },
+            { label: '🗂 Analisi profonda (2 livelli)', hint: 'du su due livelli di cartelle, ordinata per dimensione.', expert: true, run: function () { return sh('du -k -d 2 /sdcard 2>/dev/null | sort -rn | head -n 60').then(function (t) { Kanga.ui.showRaw('Occupazione /sdcard (KB, 2 livelli)', t || 'vuoto'); }); } },
+            { label: '🔧 fstrim manuale', hint: 'Esegue il trim del filesystem (cosa che Android fa di notte in idle). Migliora la velocità di scrittura su eMMC/UFS.', danger: true, expert: true, run: function () { return sh('sm fstrim', 120000).then(function () { Kanga.ui.toast('fstrim eseguito', 'ok'); }); } },
+            { label: '📊 Statistiche disco', hint: 'dumpsys diskstats: numeri grezzi di occupazione interna.', expert: true, run: function () { return sh('dumpsys diskstats | head -n 40').then(function (t) { Kanga.ui.showRaw('diskstats', t || 'vuoto'); }); } }
           ]
         };
       });
@@ -642,7 +699,11 @@ window.Kanga = window.Kanga || {};
 
     runNative: function () {
       var self = this;
-      return E.native('storage').then(function (s) {
+      return Promise.all([
+        E.native('storage'),
+        E.native('traffic').catch(function () { return null; })
+      ]).then(function (res) {
+        var s = res[0], tr = res[1];
         var findings = [];
         var score = 100;
         var usePct = s.totalBytes ? Math.round((1 - s.availBytes / s.totalBytes) * 100) : null;
@@ -660,8 +721,10 @@ window.Kanga = window.Kanga || {};
           kv: [
             ['Memoria totale', P.human(s.totalBytes)],
             ['Disponibile', P.human(s.availBytes)],
-            ['Cache di Kanga', P.human(s.myCacheBytes || 0)]
-          ],
+            ['Cache di Kanga', P.human(s.myCacheBytes || 0)],
+            tr ? ['Dati ricevuti (da accensione)', P.human(tr.rxAll), true] : null,
+            tr ? ['Dati inviati (da accensione)', P.human(tr.txAll), true] : null
+          ].filter(Boolean),
           actions: [
             { label: '🧹 Pulisci cache di Kanga', run: function () { return E.native('clearMyCache').then(function (r) { Kanga.ui.toast('Liberati ' + P.human(r.freed || 0), 'ok'); }); } },
             { label: '🔑 Autorizza spazio per-app', hint: 'Apre le impostazioni di accesso utilizzo.', run: function () { return E.native('requestUsagePermission').then(function () { Kanga.ui.toast('Concedi l\'accesso a Kanga, poi rilancia l\'analisi', 'info'); }); } }
@@ -755,23 +818,60 @@ window.Kanga = window.Kanga || {};
         'echo "sdk=$(getprop ro.build.version.sdk)"; ' +
         'echo "man=$(getprop ro.product.manufacturer)"; ' +
         'echo "model=$(getprop ro.product.model)"; ' +
-        'echo "boot=$(getprop ro.boot.verifiedbootstate)"';
+        'echo "boot=$(getprop ro.boot.verifiedbootstate)"; ' +
+        'echo "crypto=$(getprop ro.crypto.state)/$(getprop ro.crypto.type)"; ' +
+        'echo "selinux=$(getenforce 2>/dev/null)"; ' +
+        'echo "verity=$(getprop ro.boot.veritymode)"; ' +
+        'echo "adb=$(settings get global adb_enabled)"; ' +
+        'echo "devset=$(settings get global development_settings_enabled)"; ' +
+        'echo "pdns=$(settings get global private_dns_mode)"; ' +
+        'echo "pdnsspec=$(settings get global private_dns_specifier)"; ' +
+        'echo "fingerprint=$(getprop ro.build.fingerprint)"; ' +
+        'echo "gms=$(dumpsys package com.google.android.gms | grep -m1 versionName)"';
       return sh(script).then(function (out) {
         var v = {};
-        out.split('\n').forEach(function (l) { var m = l.match(/^(\w+)=(.*)$/); if (m) v[m[1]] = m[2]; });
+        out.split(/\r?\n/).forEach(function (l) { var m = l.match(/^(\w+)=(.*)$/); if (m) v[m[1]] = m[2]; });
         if (!v.patch && !v.sdk) {
           return { score: null, status: 'info', summary: 'Proprietà di sistema non leggibili.', findings: [warn('Collega un telefono con debug USB attivo per l\'analisi.')] };
         }
         var res = self.evaluate(v.patch, parseInt(v.sdk, 10) || null, v.man, v.boot);
         res.kv.push(['Modello', (v.man + ' ' + v.model).trim()]);
+        res.kv.push(['Crittografia', v.crypto || '—']);
+        res.kv.push(['Google Play Services', ((v.gms || '').replace('versionName=', '')).trim() || '—']);
+        res.kv.push(['SELinux', v.selinux || '—', true]);
+        res.kv.push(['dm-verity', v.verity || '—', true]);
+        res.kv.push(['DNS privato', (v.pdns || 'default') + (v.pdnsspec && v.pdnsspec !== 'null' ? ' (' + v.pdnsspec + ')' : ''), true]);
+        res.kv.push(['Fingerprint build', v.fingerprint || '—', true]);
+
+        if (/^encrypted/.test(v.crypto || '')) res.findings.push(ok('Crittografia attiva (' + v.crypto.replace('encrypted/', 'FBE / ') + ').'));
+        if ((v.adb || '').trim() === '1') res.findings.push(warn('Debug USB attivo: comodo per sviluppo, ma tienilo disattivato nell\'uso quotidiano (chiunque abbia accesso fisico potrebbe connettersi).'));
+        if ((v.devset || '').trim() === '1') res.findings.push(info('Opzioni sviluppatore attive.'));
+
+        res.actions = [
+          { label: '🔍 Tutte le proprietà (getprop)', hint: 'Elenco completo delle proprietà di sistema del telefono.', expert: true, run: function () { return sh('getprop').then(function (t) { Kanga.ui.showRaw('getprop — proprietà di sistema', t || 'vuoto'); }); } },
+          { label: '🛡️ Attiva DNS privato (Cloudflare 1.1.1.1)', hint: 'Cifratura DNS a livello di sistema. Reversibile con l\'azione qui accanto.', danger: true, expert: true, run: function () { return sh('settings put global private_dns_mode hostname; settings put global private_dns_specifier one.one.one.one').then(function () { Kanga.ui.toast('DNS privato: one.one.one.one', 'ok'); }); } },
+          { label: '↩️ DNS privato automatico', hint: 'Riporta il DNS privato in modalità automatica (opportunistic).', danger: true, expert: true, run: function () { return sh('settings put global private_dns_mode opportunistic; settings put global private_dns_specifier null').then(function () { Kanga.ui.toast('DNS privato: automatico', 'ok'); }); } },
+          { label: '📄 Politiche dispositivo (device policy)', hint: 'dumpsys device_policy: profili aziendali, admin del dispositivo.', expert: true, run: function () { return sh('dpm list-owners 2>/dev/null; dumpsys device_policy | head -n 30').then(function (t) { Kanga.ui.showRaw('Device policy e owners', t || 'nessuno'); }); } }
+        ];
         return res;
       });
     },
 
     runNative: function () {
       var self = this;
-      return E.native('deviceInfo').then(function (d) {
-        return self.evaluate(d.securityPatch, d.sdk, d.manufacturer, d.bootState);
+      return Promise.all([
+        E.native('deviceInfo'),
+        E.native('securityFlags').catch(function () { return {}; }),
+        E.native('appVersion', { package: 'com.google.android.gms' }).catch(function () { return {}; })
+      ]).then(function (r) {
+        var d = r[0], sf = r[1], gms = r[2];
+        var res = self.evaluate(d.securityPatch, d.sdk, d.manufacturer, d.bootState);
+        res.kv.push(['Crittografia', d.crypto || '—']);
+        res.kv.push(['Google Play Services', gms.version || '—']);
+        if (sf.adb === 1) res.findings.push(warn('Debug USB attivo: disattivalo nell\'uso quotidiano.'));
+        if (sf.devSettings === 1) res.findings.push(info('Opzioni sviluppatore attive.'));
+        res.kv.push(['Acceso da', d.uptimeMs ? fmtHours(d.uptimeMs / 3600000) : '—', true]);
+        return res;
       });
     },
 
@@ -828,15 +928,22 @@ window.Kanga = window.Kanga || {};
         sh("dumpsys wifi | grep -iE 'Wi-Fi is|SSID:|rssi=|Link speed' | head -n 12"),
         sh("dumpsys telephony.registry | grep -iE 'mSignalStrength|level=' | head -n 8"),
         sh('settings get global bluetooth_on'),
-        sh('ping -c 4 -W 2 8.8.8.8')
+        sh('ping -c 4 -W 2 8.8.8.8'),
+        sh('settings get global airplane_mode_on'),
+        sh('settings get global mobile_data'),
+        sh('settings get global private_dns_mode; settings get global private_dns_specifier')
       ]).then(function (r) {
         var w = P.wifi(r[0]);
         var t = P.telephony(r[1]);
         var bt = (r[2] || '').trim() === '1';
         var pg = P.ping(r[3]);
+        var airplane = (r[4] || '').trim() === '1';
+        var mobileData = (r[5] || '').trim() !== '0';
+        var pdnsParts = (r[6] || '').split(/\r?\n/).map(function (s) { return s.trim(); });
         var findings = [];
         var score = 100;
 
+        if (airplane) findings.push(warn('Modalità aereo ATTIVA: radio spente.'));
         if (w.enabled === false) findings.push(info('Wi-Fi disattivato al momento.'));
         else {
           findings.push(ok('Wi-Fi attivo' + (w.ssid ? ' — rete "' + w.ssid + '"' : '') + (w.linkSpeed ? ' (' + w.linkSpeed + ' Mbps)' : '') + '.'));
@@ -850,6 +957,7 @@ window.Kanga = window.Kanga || {};
         if (w.rssi !== undefined && w.rssi <= -80) score -= 25;
         if (t.level !== undefined && t.level <= 1) score -= 25;
         if (pg.loss > 0) score -= 20;
+        if (airplane) score -= 30;
 
         return {
           score: Math.max(0, score), status: statusFromScore(score),
@@ -860,11 +968,19 @@ window.Kanga = window.Kanga || {};
             ['Velocità link', w.linkSpeed ? w.linkSpeed + ' Mbps' : '—'],
             ['Segnale cellulare', t.level !== undefined ? t.level + '/4' : '—'],
             ['Bluetooth', bt ? 'attivo' : 'spento'],
-            ['Ping 8.8.8.8', pg.avgMs !== null ? Math.round(pg.avgMs) + ' ms' : 'n.d.']
+            ['Ping 8.8.8.8', pg.avgMs !== null ? Math.round(pg.avgMs) + ' ms' : 'n.d.'],
+            ['Dati mobili', airplane ? 'n.d. (aereo)' : (mobileData ? 'attivi' : 'disattivati')],
+            ['DNS privato', pdnsParts[0] === 'hostname' ? pdnsParts[1] : (pdnsParts[0] || 'automatico'), true],
+            ['Modalità aereo', airplane ? 'ATTIVA' : 'off', true]
           ],
           actions: [
             { label: '🔄 Riavvia Wi-Fi', hint: 'Spegne e riattiva il Wi-Fi (disconnette brevemente).', danger: true, run: function () { return sh('svc wifi disable; sleep 2; svc wifi enable').then(function () { Kanga.ui.toast('Wi-Fi riavviato', 'ok'); }); } },
-            { label: '🔄 Riavvia Bluetooth', hint: 'Spegne e riattiva il Bluetooth.', danger: true, run: function () { return sh('svc bluetooth disable; sleep 2; svc bluetooth enable').then(function () { Kanga.ui.toast('Bluetooth riavviato', 'ok'); }); } }
+            { label: '🔄 Riavvia Bluetooth', hint: 'Spegne e riattiva il Bluetooth.', danger: true, run: function () { return sh('svc bluetooth disable; sleep 2; svc bluetooth enable').then(function () { Kanga.ui.toast('Bluetooth riavviato', 'ok'); }); } },
+            { label: '🌐 Test DNS (ping google.com)', hint: 'Verifica la risoluzione dei nomi: se il ping a 8.8.8.8 va ma questo no, è colpa del DNS.', expert: true, run: function () { return sh('ping -c 3 -W 2 google.com').then(function (t) { var r2 = P.ping(t); Kanga.ui.showRaw('Test DNS — ping google.com', t + '\n\n— sintesi: ' + (r2.sent ? 'risoluzione OK, latenza ' + (r2.avgMs !== null ? Math.round(r2.avgMs) + ' ms' : 'n.d.') + ', perdita ' + r2.loss + '%' : 'DNS non risponde')); }); } },
+            { label: '✈️ Modalità aereo ON/OFF', hint: 'Spegne/accende tutte le radio (Wi-Fi, cellulare, Bluetooth).', danger: true, expert: true, run: function () { var to = airplane ? '0' : '1'; return sh('settings put global airplane_mode_on ' + to + '; am broadcast -a android.intent.action.AIRPLANE_MODE --ez state ' + (to === '1' ? 'true' : 'false')).then(function () { Kanga.ui.toast(to === '1' ? 'Modalità aereo attivata' : 'Modalità aereo disattivata', 'ok'); }); } },
+            { label: '📶 Dati mobili ON/OFF', hint: 'Disattiva o riattiva la connessione dati cellulare.', danger: true, expert: true, run: function () { return sh('svc data ' + (mobileData ? 'disable' : 'enable')).then(function () { Kanga.ui.toast(mobileData ? 'Dati mobili disattivati' : 'Dati mobili attivati', 'ok'); }); } },
+            { label: '🛣️ Tabella di routing', hint: 'ip route: come il telefono instrada il traffico.', expert: true, run: function () { return sh('ip route | head -n 12').then(function (t) { Kanga.ui.showRaw('ip route', t || 'vuoto'); }); } },
+            { label: '📡 Interfacce di rete', hint: 'Indirizzi IP delle interfacce attive (wlan0, rmnet…).', expert: true, run: function () { return sh('ip -4 addr show | grep -E "^[0-9]+:|inet " | head -n 16').then(function (t) { Kanga.ui.showRaw('ip addr (IPv4)', t || 'vuoto'); }); } }
           ]
         };
       });
@@ -872,7 +988,11 @@ window.Kanga = window.Kanga || {};
 
     runNative: function () {
       var self = this;
-      return E.native('network').then(function (n) {
+      return Promise.all([
+        E.native('network'),
+        E.native('traffic').catch(function () { return null; })
+      ]).then(function (res) {
+        var n = res[0], tr = res[1];
         var findings = [];
         var score = 100;
         var online = !!n.online;
@@ -892,7 +1012,15 @@ window.Kanga = window.Kanga || {};
             ['Wi-Fi RSSI', n.wifiRssi !== undefined && n.wifiRssi !== null ? n.wifiRssi + ' dBm' : '—'],
             ['Link Wi-Fi', n.wifiLink ? n.wifiLink + ' Mbps' : '—'],
             ['Segnale cellulare', n.cellLevel !== undefined && n.cellLevel !== null ? n.cellLevel + '/4' : '—'],
-            ['Ping', n.ping && n.ping.avgMs != null ? Math.round(n.ping.avgMs) + ' ms' : 'n.d.']
+            ['Ping', n.ping && n.ping.avgMs != null ? Math.round(n.ping.avgMs) + ' ms' : 'n.d.'],
+            tr ? ['Dati ricevuti (da accensione)', P.human(tr.rxAll), true] : null,
+            tr ? ['Dati inviati (da accensione)', P.human(tr.txAll), true] : null,
+            n.wifiFreq ? ['Frequenza Wi-Fi', n.wifiFreq + ' MHz (' + (n.wifiFreq > 4900 ? '5 GHz' : '2,4 GHz') + ')', true] : null,
+            n.privateDns ? ['DNS privato', n.privateDns, true] : null
+          ].filter(Boolean),
+          actions: [
+            { label: '🌐 Test DNS (ping google.com)', hint: 'Verifica risoluzione nomi e latenza verso internet.', run: function () { return E.native('ping', { host: 'google.com' }).then(function (p) { var msg = p.sent ? 'DNS OK · latenza ' + (p.avgMs != null ? Math.round(p.avgMs) + ' ms' : 'n.d.') + ' · perdita ' + p.loss + '%' : 'DNS/route non risponde'; Kanga.ui.showRaw('Test DNS — ping google.com', JSON.stringify(p, null, 2) + '\n\n' + msg); }); } },
+            { label: '📊 Interfacce e traffico', hint: 'Numeri grezzi di rete.', expert: true, run: function () { Kanga.ui.showRaw('Statistiche rete native', JSON.stringify({ network: n, traffic: tr }, null, 2)); } }
           ]
         };
       });
@@ -948,7 +1076,7 @@ window.Kanga = window.Kanga || {};
         });
       }
 
-      var finish = function (sensorsList, kv) {
+      var finish = function (sensorsList, kv, rows) {
         if (sensorsList !== null) {
           if (sensorsList.length === 0) findings.push(warn('Nessun sensore rilevato: possibile problema hardware o di lettura.'));
           else {
@@ -959,28 +1087,53 @@ window.Kanga = window.Kanga || {};
         }
         findings.push(info('Usura tipica da controllare: pulsanti (premili durante il test touch), microfono/altoparlante attutiti (pulisci i fori con aria), connettore USB che si allenta (verifica carica stabile), ghost touch (test multi-touch senza toccare).'));
         findings.push(info('Esegui i test interattivi qui sotto per display, touch, audio e microfono.'));
-        return { score: score, status: 'info', summary: 'Test interattivi e sensori', findings: findings, kv: kv || [], actions: actions };
+        return { score: score, status: 'info', summary: 'Test interattivi e sensori', findings: findings, kv: kv || [], actions: actions, rows: rows && rows.data && rows.data.length ? rows : null, rowsExpert: true };
       };
 
       if (E.mode === 'desktop') {
-        return sh('dumpsys sensorservice | head -n 46').then(function (out) {
-          var list = P.sensors(out);
+        return Promise.all([
+          sh('dumpsys sensorservice | head -n 46'),
+          sh('dumpsys drm.drmManager 2>/dev/null | grep -iE "security level|widevine" | head -n 6; dumpsys media.drm 2>/dev/null | grep -iE "security level|widevine" | head -n 6'),
+          sh('dumpsys media.camera 2>/dev/null | grep -E "^Camera [0-9]" | head -n 10')
+        ]).then(function (r) {
+          var list = P.sensors(r[0]);
           var names = list.map(function (s) { return { name: s.name }; });
-          return finish(names.length ? names : null, [['Sensori letti', list.length ? String(list.length) : '—']]);
+          var wm = (r[1] || '').match(/security level:\s*(L\d)/i);
+          var widevine = wm ? wm[1] : null;
+          var cams = (r[2] || '').split(/\r?\n/).filter(function (l) { return l.trim(); });
+          var kv = [
+            ['Sensori letti', list.length ? String(list.length) : '—'],
+            ['Widevine DRM', widevine || '—'],
+            ['Telecamere', cams.length ? cams.map(function (c) { return c.split(':').slice(0, 2).join(':').trim(); }).join(' · ') : '—', true]
+          ];
+          if (widevine === 'L1') findings.push(ok('Widevine L1: streaming in HD/4K supportato (Netflix, Prime…).'));
+          else if (widevine === 'L3') findings.push(warn('Widevine L3: i servizi streaming mostrano solo qualità SD.'));
+          actions.push({ label: '📷 Apri fotocamera (prova reale)', hint: 'Avvia l\'app fotocamera: scatta una foto per verificare il modulo.', run: function () { return sh('am start -a android.media.action.STILL_IMAGE_CAMERA').then(function () { Kanga.ui.toast('Fotocamera aperta: scatta e rivedi la foto', 'ok'); }); } });
+          actions.push({ label: '🎮 Renderer grafico (GPU)', hint: 'Chip GPU attivo riportato da SurfaceFlinger.', expert: true, run: function () { return sh('dumpsys SurfaceFlinger | grep -iE "GLES|OpenGL" | head -n 6').then(function (t) { Kanga.ui.showRaw('GPU', t || 'n.d.'); }); } });
+          return finish(names.length ? names : null, kv);
         });
       }
       if (E.mode === 'native') {
-        return E.native('sensors').then(function (s) {
-          var list = (s.list || []).map(function (x) { return { name: x.name }; });
-          return E.native('deviceInfo').then(function (d) {
-            var kv = [
-              ['Display', d.widthPx + '×' + d.heightPx],
-              ['Frequenza', d.refreshHz ? Math.round(d.refreshHz) + ' Hz' : '—'],
-              ['Densità', d.densityDpi ? d.densityDpi + ' dpi' : '—'],
-              ['Sensori', String(list.length)]
-            ];
-            return finish(list, kv);
-          }).catch(function () { return finish(list, [['Sensori', String(list.length)]]); });
+        return Promise.all([
+          E.native('sensors'),
+          E.native('drm').catch(function () { return {}; }),
+          E.native('deviceInfo').catch(function () { return {}; })
+        ]).then(function (r) {
+          var s = r[0], drm = r[1], d = r[2];
+          var list = (s.list || []);
+          var names = list.map(function (x) { return { name: x.name }; });
+          var rows = list.length ? { cols: ['Sensore', 'Produttore', 'Consumo (mA)'], data: list.map(function (x) { return [x.name, x.vendor || '—', String(x.power)]; }) } : null;
+          var kv = [
+            ['Display', d.widthPx ? d.widthPx + '×' + d.heightPx : '—'],
+            ['Frequenza', d.refreshHz ? Math.round(d.refreshHz) + ' Hz' : '—'],
+            ['Densità', d.densityDpi ? d.densityDpi + ' dpi' : '—'],
+            ['Sensori', String(list.length)],
+            ['Widevine DRM', drm.widevine || '—']
+          ];
+          if (drm.widevine === 'L1') findings.push(ok('Widevine L1: streaming HD/4K supportato.'));
+          else if (drm.widevine === 'L3') findings.push(warn('Widevine L3: streaming solo in SD.'));
+          actions.push({ label: '📷 Apri fotocamera (prova reale)', hint: 'Avvia l\'app fotocamera: scatta una foto per verificare il modulo.', run: function () { return E.native('openCamera').then(function () { Kanga.ui.toast('Fotocamera aperta: scatta e rivedi la foto', 'ok'); }); } });
+          return finish(list.length ? names : null, kv, rows);
         });
       }
       return Promise.resolve(finish(null, [['Modalità', 'browser — test locali']]));
@@ -1027,7 +1180,7 @@ window.Kanga = window.Kanga || {};
       return Promise.all([
         sh('dumpsys battery | grep -i temperature'),
         sh("dumpsys thermalservice 2>/dev/null | grep -iE 'throttling|status' | head -n 8"),
-        sh('for z in /sys/class/thermal/thermal_zone*; do echo "$(cat $z/type 2>/dev/null)=$(cat $z/temp 2>/dev/null)"; done | grep -iE "cpu|battery|gpu|soc" | head -n 8')
+        sh('for z in /sys/class/thermal/thermal_zone*; do echo "$(cat $z/type 2>/dev/null)=$(cat $z/temp 2>/dev/null)"; done | head -n 24')
       ]).then(function (r) {
         var m = (r[0] || '').match(/temperature:\s*(-?\d+)/);
         var tempC = m ? parseInt(m[1], 10) / 10 : null;
@@ -1035,14 +1188,21 @@ window.Kanga = window.Kanga || {};
         var throttling = thLines.length ? thLines[0] : null;
         var res = self.evalTemp(tempC, throttling);
         var zones = [];
-        (r[2] || '').split('\n').forEach(function (l) {
+        (r[2] || '').split(/\r?\n/).forEach(function (l) {
           var zm = l.match(/^([^=]+)=(-?\d+)$/);
           if (zm) zones.push([zm[1], (parseFloat(zm[2]) > 1000 ? (parseFloat(zm[2]) / 1000).toFixed(1) + ' °C' : zm[2])]);
         });
         res.summary = tempC !== null ? 'Temperatura batteria: ' + tempC + ' °C' : 'Analisi termica';
         res.kv = [['Batteria', tempC !== null ? tempC + ' °C' : '—']];
-        if (zones.length) res.rows = { cols: ['Zona termica', 'Valore'], data: zones.slice(0, 8) };
+        if (zones.length) {
+          res.rows = { cols: ['Zona termica', 'Valore'], data: zones.slice(0, 16) };
+          res.rowsExpert = true;
+        }
         if (thLines.length) res.raw = thLines.join('\n');
+        res.actions = [
+          { label: '❄️ Raffredda il telefono', hint: 'Chiude le app in background (spesso è loro il calore) e libera la cache.', danger: true, run: function () { return sh('am kill-all').then(function () { return sh('pm trim-caches 999G'); }).then(function () { Kanga.ui.toast('Background chiusi: la temperatura dovrebbe scendere', 'ok'); }); } },
+          { label: '📊 Frequenze CPU live', hint: 'Se i core girano al massimo per lungo tempo, è throttling in atto.', expert: true, run: function () { return sh('for c in /sys/devices/system/cpu/cpu[0-9]*; do echo "$c: $(cat $c/cpufreq/scaling_cur_freq 2>/dev/null) kHz ($(cat $c/cpufreq/scaling_max_freq 2>/dev/null) max)"; done | head -n 12').then(function (t) { Kanga.ui.showRaw('Frequenze CPU attuali vs max (kHz)', t || 'non leggibile'); }); } }
+        ];
         return res;
       });
     },

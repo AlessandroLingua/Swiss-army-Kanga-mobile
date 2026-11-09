@@ -119,8 +119,8 @@ ipcMain.handle('kanga:cmd', async (event, msg) => {
     if (cmd === 'shell') {
       const script = String(msg.script || '');
       if (!/^[\x20-\x7E\r\n]*$/.test(script)) return { ok: false, stdout: '', stderr: 'script non valido' };
-      // timeout più lungo per ping / du
-      const long = /ping|du |dumpsys batterystats/.test(script);
+      // timeout più lungo per ping / du / dexopt / cronologia batteria
+      const long = /ping|du |dumpsys batterystats|package compile|bg-dexopt-job/.test(script);
       return await adb.shell(script, msg.serial || null, long ? 30000 : 20000);
     }
 
